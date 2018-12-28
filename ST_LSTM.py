@@ -1,7 +1,6 @@
 from __future__ import print_function
 
-
-import torch 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
@@ -9,16 +8,18 @@ from torch.nn import Parameter
 
 import math
 
+
 class SpatioTemporal_LSTM(nn.Module):
     """docstring for SpatioTemporal_LSTM"""
-    def __init__(self, hidden_size, input_size):
+
+    def __init__(self, hidden_size, input_size, batch_size, height, width):
         super(SpatioTemporal_LSTM, self).__init__()
         self.hidden_size = hidden_size
         self.input_size = input_size
 
-        self.linear = nn.linear(self.input_size + self.hidden_size , 4*self.hidden_size)
+        # self.linear = nn.linear(self.input_size + self.hidden_size, 4 * self.hidden_size)
 
-        # shape = [shape]
+        shape = [batch_size, hidden_size, height, width]
 
         self.weight_xg = Parameter(torch.Tensor(shape))
         self.weight_hg = Parameter(torch.Tensor(shape))
@@ -36,17 +37,16 @@ class SpatioTemporal_LSTM(nn.Module):
         self.weight_ho = Parameter(torch.Tensor(shape))
         self.weight_co = Parameter(torch.Tensor(shape))
         self.weight_mo = Parameter(torch.Tensor(shape))
-        self.weight_1x1 = Parameter(torch.Tensor(1,1))
+        self.weight_1x1 = Parameter(torch.Tensor(1, 1))
 
-        if bias:
+        if self.bias:
             self.bias_g = Parameter(torch.Tensor(4 * hidden_size))
             self.bias_i = Parameter(torch.Tensor(4 * hidden_size))
             self.bias_f = Parameter(torch.Tensor(4 * hidden_size))
             self.bias_g_ = Parameter(torch.Tensor(4 * hidden_size))
             self.bias_i_ = Parameter(torch.Tensor(4 * hidden_size))
             self.bias_f_ = Parameter(torch.Tensor(4 * hidden_size))
-            self.bias_o = Parameter(torch.Tensor(4 * hidden_size))        
-
+            self.bias_o = Parameter(torch.Tensor(4 * hidden_size))
 
         self._reset_parameters()
 
@@ -56,31 +56,31 @@ class SpatioTemporal_LSTM(nn.Module):
             weight.data.uniform_(-stdv, stdv)
 
     def _compute_cell(self, x, h, c, M):
-        g = torch.tanh(F.conv2d(x,self.weight_xg) + F.conv2d(h, self.weight_hg) + self.bias_g)
+        g = torch.tanh(F.conv2d(x, self.weight_xg) + F.conv2d(h, self.weight_hg) + self.bias_g)
         i = torch.sigmoid(F.conv2d(x, self.weight_xi) + F.conv2d(h, self.weight_hi) + self.bias_i)
         f = torch.sigmoid(F.conv2d(x, self.weight_xf) + F.conv2d(h, self.weight_hf) + self.bias_f)
 
-        c = f*c + i*g
+        c = f * c + i * g
 
-        g_ =  torch.tanh(F.conv2d(x,self.weight_xg_) + F.conv2d(M, self.weight_mg) + self.bias_g_)
+        g_ = torch.tanh(F.conv2d(x, self.weight_xg_) + F.conv2d(M, self.weight_mg) + self.bias_g_)
         i_ = torch.sigmoid(F.conv2d(x, self.weight_xi_) + F.conv2d(M, self.weight_mi) + self.bias_i_)
-        f = torch.sigmoid(F.conv2d(x, self.weight_xf_) + F.conv2d(M, self.weight_mf) + self.bias_f_)
+        f_ = torch.sigmoid(F.conv2d(x, self.weight_xf_) + F.conv2d(M, self.weight_mf) + self.bias_f_)
 
-        M = f_*M + i_*g_
+        M = f_ * M + i_ * g_
 
-        o = torch.sigmoid(F.conv2d(x, self.weight_xo) + F.conv2d(M, self.weight_mo) + F.conv2d(c, self.weight_co) + F.conv2d(h, self.weight_ho) + self.bias_o)
+        o = torch.sigmoid(F.conv2d(x, self.weight_xo) + F.conv2d(M, self.weight_mo)
+                          + F.conv2d(c, self.weight_co) + F.conv2d(h, self.weight_ho) + self.bias_o)
 
-        h = o * torch.tanh(F.conv2d(torch.cat((c,M), dim= ),self.weight_1x1))
+        h = o * torch.tanh(F.conv2d(torch.cat((c, M), dim=1), self.weight_1x1))
 
-        return h,c,M
+        return h, c, M
 
-
-    def forward(self,input_, state=None):
+    def forward(self, input_, state=None):
         if state is None:
             raise ValueError('nfnaiszfv vsknv')
 
-        h,c,M = state
+        h, c, M = state
 
-        cell_output = self._compute_cell(input_,h,c,M)
+        cell_output = self._compute_cell(input_, h, c, M)
 
         return cell_output
