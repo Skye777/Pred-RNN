@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 
-MAX_LENGTH = 10
+MAX_LENGTH = 12
 SOS_token = 0
 EOS_token = 1
 
@@ -43,24 +43,32 @@ def timeSince(since, percent):
     return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
 
 
-def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion,
+def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, use_cuda,
           max_length=MAX_LENGTH, teacher_forcing_ratio=0.5):
     encoder_hidden = encoder.initHidden()  # (1, 1, hidden_size)
 
     encoder_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
 
-    input_length = input_variable.size()[0]  # lags
-    target_length = target_variable.size()[0]  # steps
+    input_length = len(input_variable[0])  # lags
+    target_length = len(target_variable[0])  # steps
 
     loss = 0.0
 
-    encoder_outputs = Variable(torch.zeros(max_length, encoder.hidden_size))
+    encoder_outputs = Variable(torch.zeros(max_length, encoder.hidden_sizes[0]))
     encoder_outputs = encoder_outputs.cuda() if use_cuda else encoder_outputs
 
+    first_timestep = False
+
     for ei in range(input_length):
-        encoder_output, encoder_hidden = encoder(input_variable[ei], encoder_hidden)    # input_variable[ei]=>(batch_size,h, w)
-        encoder_outputs[ei] = encoder_output[0][0]
+        if ei == 0:
+            first_timestep = True
+
+        # input_variable[ei]=>(batch_size, c, h, w)
+        encoder_output, encoder_hidden = encoder(input_variable[ei], first_timestep)
+        print(encoder_output[0].size())
+        encoder_outputs[ei] = encoder_output[0]
+        first_timestep = False
 
     decoder_input = Variable(torch.LongTensor([[SOS_token]]))
     decoder_input = decoder_input.cuda() if use_cuda else decoder_input
@@ -99,7 +107,8 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
     return loss.data[0] / target_length
 
 
-def trainIters(encoder, decoder, n_iters, data_generator, print_every=1000, plot_every=100, learning_rate=0.01):
+def trainIters(encoder, decoder, n_iters, data_generator, print_every=1000,
+               plot_every=100, learning_rate=0.01, batch_first=False, use_cuda=False):
     start_time = time.time()
 
     encoder_optimizer = t.optim.SGD(encoder.parameters(), lr=learning_rate)
@@ -114,11 +123,15 @@ def trainIters(encoder, decoder, n_iters, data_generator, print_every=1000, plot
     plot_losses = list()
     for i in range(1, n_iters + 1):
         training_pair = next(data_generator)
-        input_variable = training_pair[0]   # (lags, batch_size, h, w)
-        target_variable = training_pair[1]
+        input_variable = t.Tensor(training_pair[0])   # (batch_size, lags, c, h, w)
+        target_variable = t.Tensor(training_pair[1])
+        if batch_first:
+            # (b, t, c, h, w) -> (t, b, c, h, w)
+            input_variable = input_variable.permute(1, 0, 2, 3, 4)
+            target_variable = target_variable.permute(1, 0, 2, 3, 4)
 
         loss = train(input_variable, target_variable, encoder,
-                     decoder, encoder_optimizer, decoder_optimizer, criterion)
+                     decoder, encoder_optimizer, decoder_optimizer, criterion, use_cuda=use_cuda)
         print_loss_total += loss
         plot_loss_total += loss
 
@@ -175,34 +188,39 @@ def trainIters(encoder, decoder, n_iters, data_generator, print_every=1000, plot
 #     return decoded_words, decoder_attentions[:di + 1]
 
 
-use_cuda = True
-n_layer = 4
-batch_size = 128
-hidden_size = [32, 32, 32, 32]
-input_size = 3
-height = 36
-width = 80
-lags = 12
-steps = 12
+def main():
+    use_cuda = False
+    batch_first = True
+    n_layer = 4
+    batch_size = 128
+    hidden_size = [32, 32, 32, 32]
+    input_size = 3
+    height = 36
+    width = 80
+    lags = 12
+    steps = 12
+    channels = 1
+    bias = True
 
-file_path = 'sst.mon.mean1850-2015.nc'  #####
+    file_path = 'sst.mon.mean1850-2015.nc'  #####
 
-input, target = prepare_data.load_data(file_path, lags, steps)
+    input, target = prepare_data.load_data(file_path, lags, steps)
 
-data_generator = prepare_data.get_batches(input, target, batch_size)
+    data_generator = prepare_data.get_batches(input, target, batch_size, height, width, channels, lags, steps)
 
-# encoder1 = Encoder(input_lang.n_words, hidden_size)
-encoder1 = Encoder(n_layers=n_layer, hidden_sizes=hidden_size, input_sizes=input_size,
-                   batch_size=batch_size, height=height, width=width, use_cuda=use_cuda)
-# decoder1 = Decoder(hidden_size, output_lang.n_words, dropout_p=0.1)
-decoder1 = Decoder(n_layers=n_layer, hidden_sizes=hidden_size, input_sizes=input_size,
-                   batch_size=batch_size, height=height, width=width, use_cuda=use_cuda)
+    # encoder1 = Encoder(input_lang.n_words, hidden_size)
+    encoder1 = Encoder(n_layers=n_layer, hidden_sizes=hidden_size, input_sizes=input_size,
+                       batch_size=batch_size, channels=channels, height=height, width=width, bias=bias, use_cuda=use_cuda)
+    # decoder1 = Decoder(hidden_size, output_lang.n_words, dropout_p=0.1)
+    decoder1 = Decoder(n_layers=n_layer, hidden_sizes=hidden_size, input_sizes=input_size,
+                       batch_size=batch_size, height=height, width=width, use_cuda=use_cuda)
 
-if use_cuda:
-    encoder1 = encoder1.cuda()
-    attn_decoder1 = decoder1.cuda()
+    if use_cuda:
+        encoder1 = encoder1.cuda()
+        attn_decoder1 = decoder1.cuda()
 
-trainIters(encoder1, decoder1, 75000, data_generator, print_every=5000)
+    trainIters(encoder1, decoder1, 75000, data_generator, print_every=5000, batch_first=batch_first, use_cuda=use_cuda)
 
-# if __name__ == '__main__':
-#     main()
+
+if __name__ == '__main__':
+    main()

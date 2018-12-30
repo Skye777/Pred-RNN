@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import numpy as np
 import netCDF4 as nc
+from numpy import array
 
 import matplotlib.pyplot as plt
 #%matplotlib inline
@@ -18,11 +19,11 @@ def load_data(file_path, lags, steps):
     return input, target
 
 
-def get_batches(input, target, batch_size):
+def get_batches(input, target, batch_size, height, width, channels, lags, steps):
     length = len(input[0])
     for i in range(0, length, batch_size):
-        input_i = input[i:i+batch_size, :, :, :]
-        target_i = target[i:i+batch_size, :, :, :]
+        input_i = array(input[i:i+batch_size]).reshape(batch_size, lags, channels, height, width)
+        target_i = array(target[i:i+batch_size]).reshape(batch_size, steps, channels, height, width)
         yield (input_i, target_i)
         # batch = data[:, i:i+batch_size, :, :]			#[20,batch_size,64,64]
         # batch_x = batch[0:10]
